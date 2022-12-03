@@ -1,10 +1,10 @@
-use std::str::FromStr;
-use std::slice::Iter;
 use std::fs;
+use std::slice::Iter;
+use std::str::FromStr;
 
 enum Input {
     Calories(u32),
-    Separator
+    Separator,
 }
 
 impl Input {
@@ -40,25 +40,21 @@ fn parse_input(line: &str) -> Input {
 pub fn solve() {
     let input = fs::read_to_string("resources/day1.txt").unwrap();
 
-    let calories: Vec<Input> = input.lines()
-        .map(|line| parse_input(line))
-        .collect();
+    let calories: Vec<Input> = input.lines().map(|line| parse_input(line)).collect();
 
-    let calories_by_elf: Vec<&[Input]> = calories
-        .split(|input| input.is_separator())
-        .collect();
+    let calories_by_elf: Vec<&[Input]> = calories.split(|input| input.is_separator()).collect();
 
-    let mut calorie_count_by_elf: Vec<u32> = calories_by_elf.iter()
-       .map(|elf_calories| count_calories(elf_calories.iter()))
-       .collect();
+    let mut calorie_count_by_elf: Vec<u32> = calories_by_elf
+        .iter()
+        .map(|elf_calories| count_calories(elf_calories.iter()))
+        .collect();
 
     calorie_count_by_elf.sort_by(|x, y| y.cmp(x));
-    
+
     let max_calories = calorie_count_by_elf[0];
-    
+
     let top3_calories = calorie_count_by_elf.iter().take(3).sum::<u32>();
 
     println!("{}", max_calories);
     println!("{}", top3_calories);
 }
-

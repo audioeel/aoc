@@ -10,9 +10,7 @@ struct Instruction {
 
 type Stacks = Vec<Vec<char>>;
 
-pub fn solve() {
-    let input = fs::read_to_string("resources/day5.txt").unwrap();
-    
+fn parse_input(input: String) -> (Stacks, Vec<Instruction>) {
     let mut stacks: Stacks = vec![];    
     let mut nstacks: usize = 0;
     let mut rinstructions = vec![];
@@ -53,8 +51,12 @@ pub fn solve() {
         }
     }
 
+    (stacks, rinstructions)
+}
+
+fn apply_instructions<F>(mut stacks: Stacks, rinstructions: &Vec<Instruction>, buffer_factory: F) -> Stacks 
+    where F: Fn(Vec<char>) -> Vec<char> {
     for instruction in rinstructions.iter().rev() {
-        println!("{:?}", instruction);
         let from = &mut stacks[instruction.from - 1];
         let mut buffer: Vec<char> = vec![]; 
         for _ in  0..instruction.amount {
@@ -65,16 +67,31 @@ pub fn solve() {
         }
 
         let to = &mut stacks[instruction.to - 1];
-        for c in buffer.iter().rev() {
-            to.push(*c);
+        for c in buffer_factory(buffer) {
+            to.push(c);
         }
     }
 
+    stacks
+}
+
+fn crates_at_top_of_stacks(stacks: &Stacks) -> Vec<char> {
+    let mut crates: Vec<char> = vec![];
     for stack in stacks {
         match stack.last() {
-            Some(c) => { print!("{c}"); }
+            Some(c) => { crates.push(*c); }
             _ => {}
         }
     }
-    println!("");
+
+    crates
+}
+
+pub fn solve() {
+    let input = fs::read_to_string("resources/day5.txt").unwrap();
+    let (stacks, rinstructions) = parse_input(input);
+    let stacks_9000 = apply_instructions(stacks.clone(), &rinstructions, |buffer| buffer.iter().map(|c| *c).collect());
+    println!("{:?}", crates_at_top_of_stacks(&stacks_9000));
+    let stacks_9001 = apply_instructions(stacks.clone(), &rinstructions, |buffer| buffer.iter().rev().map(|c| *c).collect());
+    println!("{:?}", crates_at_top_of_stacks(&stacks_9001));
 }

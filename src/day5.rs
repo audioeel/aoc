@@ -65,8 +65,8 @@ pub fn solve() {
         }
 
         let to = &mut stacks[instruction.to - 1];
-        for c in buffer {
-            to.push(c);
+        for c in buffer.iter().rev() {
+            to.push(*c);
         }
     }
 

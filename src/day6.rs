@@ -1,39 +1,29 @@
 use std::fs;
 
+fn find_marker<const W: usize>(letters: &Vec<char>) -> Option<usize> {
+    let n = letters.len();
+    let mut start = 0;
+    for i in 1..n {
+        // if within window bounds, pick up where we left off
+        let bound = if start + W > i { start } else { i - W };
+        start = i;
+        for j in bound..i {
+            if !letters[j..i].contains(&letters[i]) {
+                start = j;
+                break;
+            }
+        }
+        if i - start == W {
+            return Some(i);
+        }
+    }
+    None
+}
 
 pub fn solve() {
     let input = fs::read_to_string("resources/day6.txt").unwrap();
     let letters: Vec<char> = input.chars().collect();
 
-    let n = letters.len();
-    let mut is_unique: Vec<Vec<bool>> = vec![vec![false; n]; n];
-
-    for i in 0..n {
-        is_unique[i][i] = true;
-    }
-
-    for i in 0..n {
-        for j in i+1..n {
-            is_unique[i][j] = is_unique[i][j - 1] && !letters[i..j].contains(&letters[j]);
-        }
-    }
-
-    let mut start_of_packet = -1;
-    let mut start_of_message = -1;
-    for i in 0..n {
-        if start_of_packet < 0 && is_unique[i][i+3] {
-            start_of_packet = (i+4) as i32;
-        }
-
-        if start_of_message < 0 && is_unique[i][i+13] {
-            start_of_message = (i+14) as i32;
-        }
-
-        if start_of_packet >= 0 && start_of_message >= 0 {
-            break;
-        }
-    }
-    println!("start of packet: {}", start_of_packet);
-    println!("start of message: {}", start_of_message);
-
+    println!("start of packet: {}", find_marker::<4>(&letters).unwrap());
+    println!("start of message: {}", find_marker::<14>(&letters).unwrap());
 }

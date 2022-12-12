@@ -1,41 +1,34 @@
 use std::fs;
 
 enum Operation {
-    Add(u32),
-    Multiply(u32),
+    Add(u64),
+    Multiply(u64),
     Square,
     Double,
 }
 
-struct MonkeyBehaviors {
+struct Monkey {
     operation: Operation,
-    divisor: u32,
+    divisor: u64,
     if_branch: usize,
     else_branch: usize,
 }
 
-type MonkeyInventory = Vec<usize>;
+type Inventory = Vec<u64>;
 
-type Items = Vec<u32>;
-
-fn parse(input: String) -> (Items, Vec<MonkeyInventory>, Vec<MonkeyBehaviors>) {
+fn parse(input: String) -> (Vec<Inventory>, Vec<Monkey>) {
     let mut iter = input.lines();
-    let mut inventories: Vec<MonkeyInventory> = vec![];
-    let mut behaviors: Vec<MonkeyBehaviors> = vec![];
-    let mut items: Vec<u32> = vec![];
-    let mut item_count: usize = 0;
+    let mut inventories: Vec<Inventory> = vec![];
+    let mut monkeys: Vec<Monkey> = vec![];
 
     loop {
         iter.next();
 
         let mut items_iter = iter.next().unwrap().split(": ");
         items_iter.next();
-        let new_items: Vec<u32> = items_iter.next().unwrap().split(", ")
-            .map(|item| u32::from_str_radix(item, 10).unwrap())
+        let items: Vec<u64> = items_iter.next().unwrap().split(", ")
+            .map(|item| u64::from_str_radix(item, 10).unwrap())
             .collect();
-
-        let new_item_count = new_items.len();
-        new_items.iter().for_each(|&item| items.push(item));
 
         let operation_str = iter.next().unwrap();
         let operation = if operation_str.contains('*') {
@@ -45,7 +38,7 @@ fn parse(input: String) -> (Items, Vec<MonkeyInventory>, Vec<MonkeyBehaviors>) {
             if term_str == "old" {
                 Operation::Square
             } else {
-                let constant = u32::from_str_radix(term_str, 10).unwrap();
+                let constant = u64::from_str_radix(term_str, 10).unwrap();
                 Operation::Multiply(constant)
             }
         } else if operation_str.contains('+') {
@@ -55,7 +48,7 @@ fn parse(input: String) -> (Items, Vec<MonkeyInventory>, Vec<MonkeyBehaviors>) {
             if term_str == "old" {
                 Operation::Double
             } else {
-                let constant = u32::from_str_radix(term_str, 10).unwrap();
+                let constant = u64::from_str_radix(term_str, 10).unwrap();
                 Operation::Add(constant)
             }
         } else {
@@ -65,26 +58,25 @@ fn parse(input: String) -> (Items, Vec<MonkeyInventory>, Vec<MonkeyBehaviors>) {
         let test_str = iter.next().unwrap();
         let mut test_iter = test_str.split(" divisible by ");
         test_iter.next();
-        let divisor = u32::from_str_radix(test_iter.next().unwrap(), 10).unwrap();
+        let divisor = u64::from_str_radix(test_iter.next().unwrap(), 10).unwrap();
 
         let if_true_str = iter.next().unwrap();
         let mut if_true_iter = if_true_str.split(" throw to monkey ");
         if_true_iter.next();
-        let true_monkey = usize::from_str_radix(if_true_iter.next().unwrap(), 10).unwrap();
+        let if_branch = usize::from_str_radix(if_true_iter.next().unwrap(), 10).unwrap();
 
         let if_false_str = iter.next().unwrap();
         let mut if_false_iter = if_false_str.split(" throw to monkey ");
         if_false_iter.next();
-        let false_monkey = usize::from_str_radix(if_false_iter.next().unwrap(), 10).unwrap();
+        let else_branch = usize::from_str_radix(if_false_iter.next().unwrap(), 10).unwrap();
 
-        inventories.push((item_count..(item_count+new_item_count)).collect::<Vec<usize>>());
-        item_count += new_item_count;
+        inventories.push(items);
 
-        behaviors.push(MonkeyBehaviors {
+        monkeys.push(Monkey {
             operation: operation,
             divisor: divisor,
-            if_branch: true_monkey,
-            else_branch: false_monkey,
+            if_branch: if_branch,
+            else_branch: else_branch,
         });
 
         match iter.next() {
@@ -93,10 +85,10 @@ fn parse(input: String) -> (Items, Vec<MonkeyInventory>, Vec<MonkeyBehaviors>) {
         }
     }
 
-    (items, inventories, behaviors)
+    (inventories, monkeys)
 }
 
-fn compute_worry(operation: &Operation, item: u32) -> u32 {
+fn compute_worry(operation: &Operation, item: u64) -> u64 {
     match operation {
         Operation::Add(constant) => item + constant,
         Operation::Multiply(constant) => item * constant,
@@ -105,57 +97,23 @@ fn compute_worry(operation: &Operation, item: u32) -> u32 {
     }
 }
 
-fn count_inspections_relaxed(items: &Items, mut inventories: Vec<MonkeyInventory>, behaviors: &Vec<MonkeyBehaviors>) -> Vec<u32> {
-    const ROUNDS: usize = 20;
-
+fn count_inspections(rounds: u32, mut inventories: Vec<Inventory>, monkeys: &Vec<Monkey>, attenuation: Option<fn(u64) -> u64>) -> Vec<u64> {
     let n = inventories.len();
-    let mut worries: Items = items.clone();
-
-    let mut inspections: Vec<u32> = vec![0; n];
-    for _ in 0..ROUNDS {
-        for id in 0..n {
-            let behavior = &behaviors[id];
-            let changes: Vec<(usize, usize)> = inventories[id].iter().map(|&item_idx| {
-                let new_worry: u32 = compute_worry(&behavior.operation, worries[item_idx]) / 3;
-                inspections[id] += 1;
-                let receiver_id = if new_worry % behavior.divisor == 0 { behavior.if_branch } else { behavior.else_branch };
-                worries[item_idx] = new_worry;
-                (receiver_id, item_idx)
-            }).collect();
-            inventories[id].clear();
-            for change in changes {
-                inventories[change.0].push(change.1);
-            }
-        }
-    }
-
-    inspections.sort_by(|a, b| b.cmp(a));
-
-    inspections
-}
-
-fn count_inspections_panic(items: &Items, mut inventories: Vec<MonkeyInventory>, behaviors: &Vec<MonkeyBehaviors>) -> Vec<u64> {
-    const ROUNDS: usize = 10000;
-
-    let n = inventories.len();
-    // due to the huge amount of rounds, as well as the out of control worry levels, we try to
-    // operate in the divisor "ring" of each monkey: we compute the worry level of each item
-    // modulo each monkey's divisor
-    let mut worries: Vec<Items> = items.iter().map(|&item| {
-        behaviors.iter().map(|behavior| item % behavior.divisor).collect()
-    }).collect();
+    let supermod: u64 = monkeys.iter().map(|m| m.divisor).product();
 
     let mut inspections: Vec<u64> = vec![0; n];
-    for _ in 0..ROUNDS {
+    for _ in 0..rounds {
         for id in 0..n {
-            let behavior = &behaviors[id];
-            let changes: Vec<(usize, usize)> = inventories[id].iter().map(|&item_idx| {
-                let new_worry: Vec<u32> = worries[item_idx].iter().enumerate()
-                    .map(|(i, &item)| compute_worry(&behavior.operation, item) % behaviors[i].divisor).collect();
+            let monkey = &monkeys[id];
+            let changes: Vec<(usize, u64)> = inventories[id].iter().map(|&item| {
+                let worry = compute_worry(&monkey.operation, item) % supermod;
+                let item = match attenuation {
+                    Some(f) => f(worry),
+                    _ => worry,
+                };
                 inspections[id] += 1;
-                let receiver_id = if new_worry[id] == 0 { behavior.if_branch } else { behavior.else_branch };
-                worries[item_idx] = new_worry;
-                (receiver_id, item_idx)
+                let receiver_id = if item % monkey.divisor == 0 { monkey.if_branch } else { monkey.else_branch };
+                (receiver_id, item)
             }).collect();
             inventories[id].clear();
             for change in changes {
@@ -171,12 +129,11 @@ fn count_inspections_panic(items: &Items, mut inventories: Vec<MonkeyInventory>,
 
 pub fn solve() {
     let input = fs::read_to_string("resources/day11.txt").unwrap();
-    let (items, inventories, behaviors) = parse(input);
+    let (inventories, monkeys) = parse(input);
 
-    let inspections = count_inspections_relaxed(&items, inventories.clone(), &behaviors);
+    let inspections = count_inspections(20, inventories.clone(), &monkeys, Some(|item| item / 3));
     println!("{}", inspections[0] * inspections[1]);
 
-
-    let inspections = count_inspections_panic(&items, inventories.clone(), &behaviors);
+    let inspections = count_inspections(10000, inventories.clone(), &monkeys, None);
     println!("{}", inspections[0] * inspections[1]);
 }

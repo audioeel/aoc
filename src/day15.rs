@@ -1,4 +1,3 @@
-extern crate regex;
 use std::fs;
 use itertools::Itertools;
 use std::collections::HashMap;

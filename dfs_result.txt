@@ -1,0 +1,18 @@
+State { position: 8, flow: 1880, opened: {5, 23, 31, 35, 37, 38, 39, 49} }
+State { position: EM, flow: 1880, opened: {DI, KZ, OM, RO, SC, SO, SP, VR} }
+State { position: EM, flow: 1880, flow: {23, 18, 7, 19, 14, 22, 24, 11} }
+
+Potential path:
+
+   0     1     2     3     4
+1  UL -> EC -> OM -> OM -> LH
+6  VR -> VR -> BP -> RO -> RO
+11 VK -> KZ -> KZ -> PJ -> SP
+16 SP -> PJ -> KZ -> KO -> LE
+21 DI -> DI -> AH -> ZP -> SO
+26 SO -> HD -> SC -> SC -> HD
+
+182 + 253 + 380 + 306 + 336 + 184 + 88 + 14
+
+Bug: throwing away valid paths, e.g. LH -> VR is thrown out in favor of VR -> VR since flow(VR->VR) > flow(LH->VR), but LH->VR is actually part of optimal solution.
+Fix: keep track of starting path info

@@ -1,4 +1,6 @@
 extern crate regex;
+extern crate rayon;
+extern crate bit_set;
 
 mod day1;
 mod day2;

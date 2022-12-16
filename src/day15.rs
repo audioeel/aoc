@@ -1,6 +1,5 @@
 use std::fs;
 use itertools::Itertools;
-use std::collections::HashMap;
 use std::cmp::{min, max};
 
 use regex::Regex;

@@ -1,13 +1,8 @@
 use std::fs;
-use std::iter;
-use std::hash::{Hash, Hasher};
-use std::cmp::Ordering;
-use std::collections::HashSet;
 use bit_set::BitSet;
-use rayon::prelude::*;
+use itertools::Itertools;
 
 use regex::Regex;
-use itertools::Itertools;
 
 #[derive(Debug)]
 struct Valve {
@@ -21,66 +16,7 @@ struct ParsedElement {
     tunnels: Vec<String>,
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct State {
-    position: usize,
-    flow: u32,
-    opened: BitSet,
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct ElephantState {
-    my_position: usize,
-    elephant_position: usize,
-    flow: u32,
-    opened: BitSet,
-}
-
-impl Ord for State {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.position.cmp(&other.position)
-            .then_with(|| self.flow.cmp(&other.flow))
-    }
-}
-
-impl PartialOrd for State {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Hash for State {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.position.hash(state);
-        self.flow.hash(state);
-    }
-}
-
-impl Ord for ElephantState {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.flow.cmp(&other.flow)
-        //self.my_position.cmp(&other.my_position)
-        //    .then_with(|| self.elephant_position.cmp(&other.elephant_position))
-        //    .then_with(|| self.flow.cmp(&other.flow))
-    }
-}
-
-impl PartialOrd for ElephantState {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Hash for ElephantState {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        //self.my_position.hash(state);
-        //self.elephant_position.hash(state);
-        self.flow.hash(state);
-    }
-}
-
-
-fn parse(input: &str) -> Vec<Valve> {
+fn parse(input: &str) -> (Vec<String>, Vec<Valve>) {
     let rg = Regex::new(
         r"Valve (?P<name>[A-Z][A-Z]) has flow rate=(?P<flow>\d+); tunnels? leads? to valves? (?P<tunnels>[A-Z][A-Z](, [A-Z][A-Z])*)").unwrap();
 
@@ -103,146 +39,134 @@ fn parse(input: &str) -> Vec<Valve> {
         })
         .collect();
 
-    valves
+    (names, valves)
 }
 
-fn evolve(state: &State, valves: &Vec<Valve>, remaining: u32) -> Vec<State> {
-    let mut next = vec![];
-    let valve_flow = valves[state.position].flow;
-    if !state.opened.contains(state.position) && valve_flow > 0 {
-        next.push(State {
-            position: state.position,
-            flow: state.flow + valve_flow * remaining,
-            opened: state.opened.iter().chain(iter::once(state.position)).collect(),
-        });
-    }
-
-    for valve in &valves[state.position].tunnels {
-        next.push(State {
-            position: *valve,
-            flow: state.flow,
-            opened: state.opened.clone(),
-        });
-    }
-
-    next
+fn make_flows_over_time(valves: &Vec<Valve>, minutes: usize) -> Vec<Vec<i32>> {
+   (1..=minutes)
+       .map(|minute| valves.iter()
+            .map(|valve| valve.flow as i32 * (minutes - minute) as i32)
+            .collect())
+       .collect()
 }
 
-fn evolve_elephant(state: &ElephantState, valves: &Vec<Valve>, remaining: u32) -> Vec<ElephantState> {
-    if valves.len() == state.opened.len() {
-        return vec![];
-    }
-
-    let mut next = vec![];
-    let my_valve_flow = valves[state.my_position].flow;
-    let elephant_valve_flow = valves[state.elephant_position].flow;
-    let open_my_valve = !state.opened.contains(state.my_position) && my_valve_flow > 0;
-    let open_elephant_valve = !state.opened.contains(state.elephant_position) && elephant_valve_flow > 0 && state.my_position != state.elephant_position;
-
-    if open_my_valve && open_elephant_valve {
-        next.push(ElephantState {
-            my_position: state.my_position,
-            elephant_position: state.elephant_position,
-            flow: state.flow + my_valve_flow * remaining + elephant_valve_flow * remaining,
-            opened: state.opened.iter().chain(vec![state.my_position, state.elephant_position].into_iter()).collect(),
-        });
-    } else if open_my_valve && !open_elephant_valve {
-        for elephant_valve in &valves[state.elephant_position].tunnels {
-            if !state.opened.contains(*elephant_valve) && *elephant_valve != state.my_position {
-                next.push(ElephantState {
-                    my_position: state.my_position,
-                    elephant_position: *elephant_valve,
-                    flow: state.flow + my_valve_flow * remaining,
-                    opened: state.opened.iter().chain(iter::once(state.my_position)).collect(),
-                });
-            }
+fn make_sources_by_destination(valves: &Vec<Valve>) -> Vec<Vec<usize>> {
+    let n = valves.len();
+    let mut sources = vec![vec![]; valves.len()];
+    for i in 0..n {
+        for &j in &valves[i].tunnels {
+            sources[j].push(i);
         }
-    } else if !open_my_valve && open_elephant_valve {
-        for my_valve in &valves[state.my_position].tunnels {
-            if !state.opened.contains(*my_valve) && *my_valve != state.elephant_position {
-                next.push(ElephantState {
-                    my_position: *my_valve,
-                    elephant_position: state.elephant_position,
-                    flow: state.flow + elephant_valve_flow * remaining,
-                    opened: state.opened.iter().chain(iter::once(state.elephant_position)).collect(),
-                });
+    }
+    sources
+}
+
+fn compute_cumulative_flows(valves: &Vec<Valve>, flows: &Vec<Vec<i32>>, minutes: usize) -> Vec<Vec<i32>> {
+    let n = valves.len();
+
+    // cflow is cumulative flow after the ith minute
+    let mut cflow: Vec<Vec<i32>> = vec![vec![-1; n]; minutes];
+
+    // opened is opened valves after the ith minute
+    let mut opened = vec![vec![BitSet::from_bytes(&[0; 8]); n]; minutes];
+
+    cflow[0][0] = flows[0][0];
+    opened[0][0].insert(0);
+    for &j in &valves[0].tunnels {
+        cflow[0][j] = 0;
+    }
+
+    for i in 1..minutes {
+        // j is our starting point: we'll see which paths are attainable from j during minute i
+        for j in 0..n {
+            // a cflow of -1 indicates that there's no path from j to any of the valves at minute i
+            if cflow[i-1][j] < 0 {
+                continue;
+            }
+            // open a valve if it's not already done and stay in place
+            let valve_j_already_opened = opened[i-1][j].contains(j);
+            let flow_at_j = cflow[i-1][j] + (if valve_j_already_opened { 0 } else { flows[i][j] });
+            if flow_at_j >= cflow[i][j] {
+                cflow[i][j] = flow_at_j;
+                opened[i][j] = opened[i-1][j].clone();
+                if !valve_j_already_opened {
+                    opened[i][j].insert(j);
+                }
+            }
+            // or try moving to other places, if moving from j to k maximizes flow
+            for &k in &valves[j].tunnels {
+                if cflow[i-1][j] >= cflow[i][k] {
+                    cflow[i][k] = cflow[i-1][j];
+                    opened[i][k] = opened[i-1][j].clone();
+                }
             }
         }
     }
-    // don't open any valves, just change positions for both the elephant and me
-    valves[state.my_position].tunnels.iter()
-        .cartesian_product(valves[state.elephant_position].tunnels.iter())
-        .filter(|(my, eleph)| my != eleph)
-        .sorted_by(|x, y| (x.0 + x.1).cmp(&(y.0 + y.1)).then_with(|| (x.0 - x.1).cmp(&(y.0 - y.1))))
-        .dedup_by(|x, y| (x.0 == y.0 && x.1 == y.1) || (x.0 == y.1 && x.1 == y.0))
-        .for_each(|(my, eleph)| {
-            next.push(ElephantState {
-                    my_position: *my,
-                    elephant_position: *eleph,
-                    flow: state.flow,
-                    opened: state.opened.clone(),
-                });
-        });
-    next
+
+    cflow
 }
 
+fn make_optimal_path(cflow: &Vec<Vec<i32>>, flows: &Vec<Vec<i32>>, sources: &Vec<Vec<usize>>) -> Vec<usize> {
+    let minutes = cflow.len();
+    let n = sources.len();
 
-fn max_pressure_alone(valves: &Vec<Valve>) -> State {
-    let minutes = 30;
+    let (idx, max) = cflow[minutes-1].iter().enumerate().max_by(| (_, v1), (_, v2) | v1.cmp(v2)).unwrap();
 
-    let mut current = HashSet::new();
-    current.insert(State {
-        position: 0,
-        flow: 0,
-        opened: BitSet::from_bytes(&[0; 7]),
-    });    
-
-    for minute in 1..=minutes {
-        println!("minute: {}, num_states: {}", minute, current.len());
-        if minute <= 5 {
-            println!("states: {:?}", current);
+    let mut optimal = vec![idx];
+    let mut current = idx;
+    for minute in (1..minutes).rev() {
+        if cflow[minute][current] == cflow[minute-1][current] + flows[minute][current] {
+            optimal.push(current);
+            continue;
         }
-
-        current = current.into_par_iter()
-            .flat_map(|state| evolve(&state, &valves, minutes - minute))
-            .collect();
+        for &j in &sources[current] {
+            if cflow[minute][current] == cflow[minute-1][j] {
+                current = j;
+                optimal.push(j);
+                break;
+            }
+        }
     }
 
-    current.into_par_iter()
-        .max_by(|x,y| x.flow.cmp(&y.flow))
-        .unwrap()
+    optimal.into_iter().rev().collect()
 }
 
-fn max_pressure_with_elephant(valves: &Vec<Valve>) -> ElephantState {
-    let minutes = 26;
-
-    let mut current = HashSet::new();
-    current.insert(ElephantState {
-        my_position: 0,
-        elephant_position: 0,
-        flow: 0,
-        opened: BitSet::from_bytes(&[0; 7]),
-    });    
-
-    for minute in 1..=minutes {
-        println!("minute: {}, num_states: {}", minute, current.len());
-        if minute <= 5 {
-            println!("states: {:?}", current);
-        }
-
-        current = current.into_par_iter()
-            .flat_map(|state| evolve_elephant(&state, &valves, minutes - minute))
-            .collect();
+fn display_flows(names: &Vec<String>, cumulative_flows: &Vec<Vec<i32>>) {
+    let minutes = cumulative_flows.len();
+    let n = names.len();
+    print!("     ");
+    for i in 0..n {
+        print!("{header:>5}", header=names[i]);
     }
-
-    current.into_par_iter()
-        .max_by(|x,y| x.flow.cmp(&y.flow))
-        .unwrap()
+    print!("\n");
+    for i in 0..minutes {
+        print!("{number:>3}: ", number=i+1);
+        for j in 0..n {
+            print!("{number:>5}", number=cumulative_flows[i][j]);
+        }
+        print!("\n");
+    }
 }
 
 pub fn solve() {
     let input = fs::read_to_string("resources/day16.txt").unwrap();
-    let valves = parse(&input);
+    let (names, valves) = parse(&input);
 
-    println!("{:?}", max_pressure_alone(&valves));
+    let n: usize = valves.len();
+    let minutes: usize = 30;
+
+    let flows_over_time = make_flows_over_time(&valves, minutes);
+
+    let cumulative_flows = compute_cumulative_flows(&valves, &flows_over_time, minutes);
+    println!("cumulative flows:");
+    display_flows(&names, &cumulative_flows);
+
+    println!("flows over time:");
+    display_flows(&names, &flows_over_time);
+
+    let sources = make_sources_by_destination(&valves);
+    let optimal = make_optimal_path(&cumulative_flows, &flows_over_time, &sources);
+
+    println!("max flow: {}", cumulative_flows[minutes-1][*optimal.last().unwrap()]);
+    println!("optimal path (len={}): {}", optimal.len(), optimal.iter().map(|idx| &names[*idx]).join(" -> ")); 
 }

@@ -61,43 +61,53 @@ fn make_sources_by_destination(valves: &Vec<Valve>) -> Vec<Vec<usize>> {
     sources
 }
 
-fn compute_cumulative_flows(valves: &Vec<Valve>, flows: &Vec<Vec<i32>>, minutes: usize) -> Vec<Vec<i32>> {
+fn compute_cumulative_flows(valves: &Vec<Valve>, flows: &Vec<Vec<i32>>, minutes: usize) -> Vec<Vec<Vec<i32>>> {
     let n = valves.len();
 
     // cflow is cumulative flow after the ith minute
-    let mut cflow: Vec<Vec<i32>> = vec![vec![-1; n]; minutes];
+    let mut cflow: Vec<Vec<Vec<i32>>> = vec![vec![vec![-1; n]; n]; minutes];
 
     // opened is opened valves after the ith minute
-    let mut opened = vec![vec![BitSet::from_bytes(&[0; 8]); n]; minutes];
+    let mut opened = vec![vec![vec![BitSet::from_bytes(&[0; 8]); n]; n]; minutes];
 
-    cflow[0][0] = flows[0][0];
-    opened[0][0].insert(0);
+    cflow[0][0][0] = flows[0][0];
+    opened[0][0][0].insert(0);
     for &j in &valves[0].tunnels {
-        cflow[0][j] = 0;
+        cflow[0][0][j] = 0;
     }
 
-    for i in 1..minutes {
-        // j is our starting point: we'll see which paths are attainable from j during minute i
-        for j in 0..n {
-            // a cflow of -1 indicates that there's no path from j to any of the valves at minute i
-            if cflow[i-1][j] < 0 {
+    for m in 1..minutes {
+        // i is the starting point
+        for i in 0..n {
+            // signals that this starting point has not been traversed yet
+            if cflow[m-1][i][i] == -1 {
                 continue;
             }
-            // open a valve if it's not already done and stay in place
-            let valve_j_already_opened = opened[i-1][j].contains(j);
-            let flow_at_j = cflow[i-1][j] + (if valve_j_already_opened { 0 } else { flows[i][j] });
-            if flow_at_j >= cflow[i][j] {
-                cflow[i][j] = flow_at_j;
-                opened[i][j] = opened[i-1][j].clone();
-                if !valve_j_already_opened {
-                    opened[i][j].insert(j);
-                }
+
+            if cflow[m-1][i][i] > cflow[m][i][i] {
+                cflow[m][i][i] = cflow[m-1][i][i];
+                opened[m][i][i] = opened[m-1][i][i].clone();
             }
-            // or try moving to other places, if moving from j to k maximizes flow
-            for &k in &valves[j].tunnels {
-                if cflow[i-1][j] >= cflow[i][k] {
-                    cflow[i][k] = cflow[i-1][j];
-                    opened[i][k] = opened[i-1][j].clone();
+
+            // ending points from (i-1)th minute
+            for &j in &valves[i].tunnels {
+                if cflow[m-1][i][i] > cflow[m][i][j] {
+                    cflow[m][i][j] = cflow[m-1][i][i];
+                    opened[m][i][j] = opened[m-1][i][i].clone();
+                }
+
+                let valve_j_already_opened = opened[m-1][i][j].contains(j);
+                let flow_at_j = cflow[m-1][i][j] + (if valve_j_already_opened { 0 } else { flows[m][j] });
+                if flow_at_j > cflow[m][j][j] {
+                    cflow[m][j][j] = flow_at_j;
+                    opened[m][j][j] = opened[m-1][i][j].clone();
+                    if !valve_j_already_opened { opened[m][j][j].insert(j); }
+                }
+                for &k in &valves[j].tunnels {
+                    if cflow[m-1][i][j] > cflow[m][j][k] {
+                        cflow[m][j][k] = cflow[m-1][i][j];
+                        opened[m][j][k] = opened[m-1][i][j].clone();
+                    }
                 }
             }
         }
@@ -106,23 +116,40 @@ fn compute_cumulative_flows(valves: &Vec<Valve>, flows: &Vec<Vec<i32>>, minutes:
     cflow
 }
 
-fn make_optimal_path(cflow: &Vec<Vec<i32>>, flows: &Vec<Vec<i32>>, sources: &Vec<Vec<usize>>) -> Vec<usize> {
+fn make_optimal_path(cflow: &Vec<Vec<Vec<i32>>>, flows: &Vec<Vec<i32>>,
+                     sources: &Vec<Vec<usize>>) -> Vec<usize> {
     let minutes = cflow.len();
-    let n = sources.len();
 
-    let (idx, max) = cflow[minutes-1].iter().enumerate().max_by(| (_, v1), (_, v2) | v1.cmp(v2)).unwrap();
+    let ((start, end), max_flow) = cflow[minutes-1].iter().enumerate()
+        .map(|(i, row)| {
+            let (j, v) = row.iter().enumerate()
+                .max_by(|(_, v1), (_, v2)| v1.cmp(v2))
+                .unwrap();
+            ((i, j), v)
+        })
+        .max_by(|(_, v1), (_, v2)| v1.cmp(v2))
+        .unwrap();
 
-    let mut optimal = vec![idx];
-    let mut current = idx;
+
+    for row in &cflow[minutes-3] {
+        println!("{:?}", row);
+    }
+
+    let mut optimal = vec![];
+    let mut cstart = start;
+    let mut cend = end;
     for minute in (1..minutes).rev() {
-        if cflow[minute][current] == cflow[minute-1][current] + flows[minute][current] {
-            optimal.push(current);
+        if cflow[minute][cstart][cend] == cflow[minute-1][cstart][cend] + flows[minute][cstart] {
+            optimal.push(cstart);
+            optimal.push(cend);
             continue;
         }
-        for &j in &sources[current] {
-            if cflow[minute][current] == cflow[minute-1][j] {
-                current = j;
-                optimal.push(j);
+
+        for &j in &sources[cstart] {
+            if cflow[minute][cstart][cend] == cflow[minute-1][j][cstart] {
+                cend = cstart;
+                cstart = j;
+                optimal.push(cstart);
                 break;
             }
         }
@@ -131,25 +158,8 @@ fn make_optimal_path(cflow: &Vec<Vec<i32>>, flows: &Vec<Vec<i32>>, sources: &Vec
     optimal.into_iter().rev().collect()
 }
 
-fn display_flows(names: &Vec<String>, cumulative_flows: &Vec<Vec<i32>>) {
-    let minutes = cumulative_flows.len();
-    let n = names.len();
-    print!("     ");
-    for i in 0..n {
-        print!("{header:>5}", header=names[i]);
-    }
-    print!("\n");
-    for i in 0..minutes {
-        print!("{number:>3}: ", number=i+1);
-        for j in 0..n {
-            print!("{number:>5}", number=cumulative_flows[i][j]);
-        }
-        print!("\n");
-    }
-}
-
 pub fn solve() {
-    let input = fs::read_to_string("resources/day16.txt").unwrap();
+    let input = fs::read_to_string("resources/day16ex.txt").unwrap();
     let (names, valves) = parse(&input);
 
     let n: usize = valves.len();
@@ -158,15 +168,9 @@ pub fn solve() {
     let flows_over_time = make_flows_over_time(&valves, minutes);
 
     let cumulative_flows = compute_cumulative_flows(&valves, &flows_over_time, minutes);
-    println!("cumulative flows:");
-    display_flows(&names, &cumulative_flows);
-
-    println!("flows over time:");
-    display_flows(&names, &flows_over_time);
 
     let sources = make_sources_by_destination(&valves);
     let optimal = make_optimal_path(&cumulative_flows, &flows_over_time, &sources);
 
-    println!("max flow: {}", cumulative_flows[minutes-1][*optimal.last().unwrap()]);
-    println!("optimal path (len={}): {}", optimal.len(), optimal.iter().map(|idx| &names[*idx]).join(" -> ")); 
+    println!("optimal path (len={}): {}", optimal.len(), optimal.iter().map(|idx| &names[*idx]).join(" -> "));
 }
